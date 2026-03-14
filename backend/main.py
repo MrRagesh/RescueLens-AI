@@ -56,10 +56,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://*.vercel.app",
-        "https://*.web.app",
-        "https://*.run.app",          # Cloud Run frontend
+        "https://rescuelensai.vercel.app", # Explicitly allow your domain
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.web\.app|https://.*\.run\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -127,7 +126,7 @@ async def analyze(request: AnalyzeRequest):
 
     logger.info(
         "analyze request | session=%s has_image=%s has_file=%s has_text=%s has_voice=%s",
-        session_id[:8],
+        str(session_id)[0:8],
         bool(request.image),
         bool(request.file_b64),
         bool(request.text),
@@ -145,7 +144,7 @@ async def analyze(request: AnalyzeRequest):
     )
 
     elapsed_ms = round((time.perf_counter() - start) * 1000)
-    logger.info("analyze done | session=%s time=%dms", session_id[:8], elapsed_ms)
+    logger.info("analyze done | session=%s time=%dms", str(session_id)[0:8], elapsed_ms)
 
     return AnalyzeResponse(
         response=result["response"],
@@ -160,4 +159,4 @@ async def analyze(request: AnalyzeRequest):
 async def clear_session(session_id: str):
     """Clear conversation memory for a given session."""
     await agent.clear_session(session_id)
-    return {"message": f"Session {session_id[:8]}… cleared"}
+    return {"message": f"Session {str(session_id)[0:8]}… cleared"}
