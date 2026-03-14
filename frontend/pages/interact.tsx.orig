@@ -1,0 +1,428 @@
+import type { NextPage } from "next";
+import Head from "next/head";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { v4 as uuidv4 } from "uuid";
+import toast, { Toaster } from "react-hot-toast";
+
+import Navbar from "../components/Navbar";
+import CustomCursor from "../components/CustomCursor";
+import CameraFeed from "../components/CameraFeed";
+import VoiceInput from "../components/VoiceInput";
+import ChatBox, { Message } from "../components/ChatBox";
+import { analyzeMultimodal, generateSessionId } from "../utils/api";
+
+// ── Status types ──────────────────────────────────────
+type Status = "idle" | "analyzing" | "speaking" | "error";
+
+// ── Text-to-speech helper ─────────────────────────────
+function speakText(text: string) {
+  if (typeof window === "undefined" || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate  = 0.95;
+  utterance.pitch = 1.0;
+  utterance.volume = 0.9;
+  // Try to use a natural-sounding voice
+  const voices = speechSynthesis.getVoices();
+  const preferred = voices.find(
+    (v) =>
+      v.lang === "en-US" &&
+      (v.name.includes("Google") || v.name.includes("Natural"))
+  );
+  if (preferred) utterance.voice = preferred;
+  speechSynthesis.speak(utterance);
+}
+
+// ─────────────────────────────────────────────────────
+const InteractPage: NextPage = () => {
+  const [messages, setMessages]     = useState<Message[]>([]);
+  const [status, setStatus]         = useState<Status>("idle");
+  const [capturedImage, setCapturedImage] = useState<string | null>(null); // base64
+  const [capturedPreview, setCapturedPreview] = useState<string | null>(null); // data URL
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const sessionId = useRef("");
+
+  useEffect(() => {
+    sessionId.current = generateSessionId();
+    setIsMounted(true);
+  }, []);
+
+  // ── Add message to chat ──────────────────────────────
+  const addMessage = useCallback((msg: Omit<Message, "id" | "timestamp">) => {
+    setMessages((prev) => [
+      ...prev,
+      { ...msg, id: uuidv4(), timestamp: new Date() },
+    ]);
+  }, []);
+
+  // ── Core analyze function ────────────────────────────
+  const analyze = useCallback(
+    async (text: string, imageBase64?: string) => {
+      setStatus("analyzing");
+
+      // Optimistic user message
+      addMessage({
+        role: "user",
+        content: text,
+        hasImage: !!imageBase64,
+        imageUrl: imageBase64 ? `data:image/jpeg;base64,${imageBase64}` : undefined,
+      });
+
+      try {
+        const result = await analyzeMultimodal({
+          text,
+          image: imageBase64 || capturedImage || undefined,
+          session_id: sessionId.current,
+        });
+
+        const aiText = result.response;
+
+        addMessage({ role: "assistant", content: aiText });
+
+        // Voice output
+        setStatus("speaking");
+        speakText(aiText);
+        setTimeout(() => setStatus("idle"), 2000);
+      } catch (err: any) {
+        setStatus("error");
+        const errMsg =
+          err?.response?.data?.detail ||
+          err.message ||
+          "Failed to reach the AI backend. Make sure the server is running.";
+        addMessage({
+          role: "assistant",
+          content: `⚠️ Error: ${errMsg}`,
+        });
+        toast.error("Analysis failed — check server connection", {
+          style: {
+            background: "rgba(10,10,20,0.95)",
+            color: "#ff2d55",
+            border: "1px solid rgba(255,45,85,0.4)",
+            fontFamily: "var(--font-mono)",
+            fontSize: "12px",
+          },
+        });
+        setTimeout(() => setStatus("idle"), 3000);
+      }
+    },
+    [addMessage, capturedImage]
+  );
+
+  // ── Handle camera capture ────────────────────────────
+  const handleCapture = useCallback(
+    (base64: string) => {
+      setCapturedImage(base64);
+      setCapturedPreview(`data:image/jpeg;base64,${base64}`);
+
+      toast.success("Frame captured — ask your question below", {
+        style: {
+          background: "rgba(10,10,20,0.95)",
+          color: "var(--neon-cyan)",
+          border: "1px solid rgba(6,255,215,0.3)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "12px",
+        },
+      });
+    },
+    []
+  );
+
+  // ── Handle voice transcript ──────────────────────────
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      analyze(text, capturedImage || undefined);
+    },
+    [analyze, capturedImage]
+  );
+
+  // ── Handle text send from ChatBox ─────────────────────
+  const handleTextSend = useCallback(
+    (text: string) => {
+      analyze(text, capturedImage || undefined);
+      // Clear captured image after use
+      setCapturedImage(null);
+    },
+    [analyze, capturedImage]
+  );
+
+  const isLoading = status === "analyzing";
+
+  return (
+    <>
+      <Head>
+        <title>Live Agent — RescueLens AI</title>
+      </Head>
+
+      <Toaster position="top-right" />
+      <CustomCursor />
+      <Navbar />
+
+      <main
+        className="min-h-screen pt-24 pb-10 px-4 md:px-6"
+        style={{ background: "var(--bg-primary)" }}
+      >
+        {/* Grid bg */}
+        <div className="fixed inset-0 grid-bg opacity-20 pointer-events-none" />
+
+        {!isMounted ? (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div
+              className="w-8 h-8 rounded-full border-2"
+              style={{
+                borderColor: "var(--neon-blue)",
+                borderTopColor: "transparent",
+                animation: "spin 1s linear infinite",
+              }}
+            />
+          </div>
+        ) : (
+          <div className="relative z-10 max-w-7xl mx-auto">
+
+          {/* ── Page header ───────────────────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4"
+          >
+            <div>
+              <h1
+                className="font-display font-black text-3xl md:text-4xl uppercase tracking-tight"
+                style={{ color: "var(--text-primary)" }}
+              >
+                Live <span className="gradient-text">AI Agent</span>
+              </h1>
+              <p
+                className="text-xs font-mono mt-1 status-online"
+                style={{ color: "var(--neon-cyan)" }}
+              >
+                Gemini 1.5 Pro · Real-Time Multimodal Analysis
+              </p>
+            </div>
+
+            {/* Status indicator */}
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={status}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.2 }}
+                className="glass px-4 py-2 rounded-full text-xs font-display uppercase tracking-widest flex items-center gap-2"
+                style={{
+                  border:
+                    status === "analyzing"
+                      ? "1px solid rgba(0,212,255,0.5)"
+                      : status === "error"
+                      ? "1px solid rgba(255,45,85,0.5)"
+                      : "1px solid rgba(0,212,255,0.15)",
+                  color:
+                    status === "analyzing"
+                      ? "var(--neon-blue)"
+                      : status === "error"
+                      ? "var(--neon-red)"
+                      : status === "speaking"
+                      ? "var(--neon-cyan)"
+                      : "var(--text-muted)",
+                }}
+              >
+                {status === "analyzing" && (
+                  <>
+                    <div
+                      className="w-3 h-3 border-2 rounded-full"
+                      style={{
+                        borderColor: "var(--neon-blue)",
+                        borderTopColor: "transparent",
+                        animation: "spin 0.8s linear infinite",
+                      }}
+                    />
+                    Analyzing
+                  </>
+                )}
+                {status === "speaking" && (
+                  <>
+                    <span className="rec-indicator w-1.5 h-1.5 rounded-full" style={{ background: "var(--neon-cyan)" }} />
+                    Speaking
+                  </>
+                )}
+                {status === "idle" && (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--neon-blue)", opacity: 0.5 }} />
+                    Ready
+                  </>
+                )}
+                {status === "error" && (
+                  <>⚠ Error</>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </motion.div>
+
+          {/* ── Main 3-panel layout ───────────────────── */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+            {/* ── LEFT: Camera ──────────────────────── */}
+            <motion.div
+              initial={{ opacity: 0, x: -30 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.7, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+              className="lg:col-span-1 flex flex-col gap-5"
+            >
+              {/* Camera section */}
+              <div
+                className="glass rounded-2xl p-4"
+                style={{ border: "1px solid rgba(0,212,255,0.12)" }}
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full rec-indicator"
+                    style={{ background: "var(--neon-red)" }}
+                  />
+                  <h2
+                    className="text-xs font-display uppercase tracking-widest"
+                    style={{ color: "var(--neon-blue)" }}
+                  >
+                    Camera Vision
+                  </h2>
+                </div>
+                <CameraFeed
+                  onCapture={handleCapture}
+                  isAnalyzing={isLoading}
+                />
+              </div>
+
+              {/* Voice input */}
+              <VoiceInput
+                onTranscript={handleVoiceTranscript}
+                isProcessing={isLoading}
+              />
+
+              {/* Captured image badge */}
+              <AnimatePresence>
+                {capturedImage && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="glass rounded-xl overflow-hidden"
+                    style={{ border: "1px solid rgba(6,255,215,0.25)" }}
+                  >
+                    <div
+                      className="px-4 py-2 flex items-center justify-between text-[10px] font-display uppercase tracking-widest"
+                      style={{
+                        background: "rgba(6,255,215,0.06)",
+                        color: "var(--neon-cyan)",
+                      }}
+                    >
+                      <span>📷 Image queued for next message</span>
+                      <button
+                        onClick={() => { setCapturedImage(null); setCapturedPreview(null); }}
+                        className="opacity-60 hover:opacity-100"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+
+            {/* ── RIGHT: Chat ───────────────────────── */}
+            <motion.div
+              initial={{ opacity: 0, x: 30 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="lg:col-span-2"
+              style={{ minHeight: "640px" }}
+            >
+              <ChatBox
+                messages={messages}
+                onSend={handleTextSend}
+                isLoading={isLoading}
+                onClear={() => setMessages([])}
+              />
+            </motion.div>
+          </div>
+
+          {/* ── Quick prompt suggestions ───────────────── */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+            className="mt-5"
+          >
+            <p
+              className="text-[10px] font-display uppercase tracking-widest mb-3"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Quick Prompts
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                "What do you see in this image?",
+                "Is this injury serious? What should I do?",
+                "How do I fix this device?",
+                "Identify what this is",
+                "Is this safe?",
+                "Give me step-by-step instructions",
+              ].map((prompt) => (
+                <motion.button
+                  key={prompt}
+                  whileHover={{ scale: 1.03, y: -1 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => handleTextSend(prompt)}
+                  disabled={isLoading}
+                  className="text-xs font-mono px-3 py-1.5 rounded-full transition-all duration-200"
+                  style={{
+                    background: "rgba(0,212,255,0.06)",
+                    border: "1px solid rgba(0,212,255,0.15)",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  {prompt}
+                </motion.button>
+              ))}
+            </div>
+          </motion.div>
+
+          {/* ── Architecture info bar ─────────────────── */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.6, delay: 0.6 }}
+            className="mt-8 glass rounded-xl px-6 py-4 flex flex-wrap items-center justify-between gap-4"
+            style={{ border: "1px solid rgba(0,212,255,0.08)" }}
+          >
+            {[
+              { label: "Model", val: "Gemini 1.5 Pro" },
+              { label: "Backend", val: "FastAPI + Cloud Run" },
+              { label: "Memory", val: "Firestore" },
+              { label: "Storage", val: "Cloud Storage" },
+              { label: "Session", val: isMounted ? sessionId.current.slice(-8) : "--------" },
+            ].map(({ label, val }) => (
+              <div key={label} className="flex flex-col gap-0.5">
+                <span
+                  className="text-[9px] font-display uppercase tracking-widest"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {label}
+                </span>
+                <span
+                  className="text-xs font-mono"
+                  style={{ color: "var(--neon-blue)" }}
+                >
+                  {val}
+                </span>
+              </div>
+            ))}
+          </motion.div>
+          </div>
+        )}
+      </main>
+    </>
+  );
+};
+
+export default InteractPage;

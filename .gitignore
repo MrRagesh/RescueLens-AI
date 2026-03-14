@@ -1,0 +1,51 @@
+# ── Node / Next.js ───────────────────────────────────
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# ── Environment files ────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+
+# ── IDE ──────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Docker ───────────────────────────────────────────
+.dockerignore
+
+# ── GCP ──────────────────────────────────────────────
+.gcloud/
+service-account-key.json
+*-service-account.json
+
+# ── Logs ─────────────────────────────────────────────
+*.log
+logs/
+
+# ── Test artifacts ───────────────────────────────────
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
