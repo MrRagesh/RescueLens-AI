@@ -44,7 +44,7 @@ class GeminiService:
 
     def __init__(self):
         self.api_key = os.environ.get("GOOGLE_API_KEY", "")
-        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-pro")
+        self.model_name = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         self._model: Optional[genai.GenerativeModel] = None
 
     async def initialize(self):
