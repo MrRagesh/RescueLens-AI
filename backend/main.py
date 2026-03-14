@@ -92,7 +92,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ROUTES
 # ════════════════════════════════════════════════════
 
-@app.get("/", tags=["meta"])
+@app.api_route("/", methods=["GET", "HEAD"], tags=["meta"])
 async def root():
     return {"message": "RescueLens AI API is running ✅", "version": "1.0.0"}
 
